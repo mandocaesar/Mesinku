@@ -30,6 +30,12 @@ namespace SmartStore.Services.Catalog
         /// </summary>
         /// <returns>Product collection</returns>
         IList<Product> GetAllProductsDisplayedOnHomePage();
+
+        /// <summary>
+        /// Gets all products
+        /// </summary>
+        /// <returns>Product Collection</returns>
+        IList<Product> GetAllProducts();
         
         /// <summary>
         /// Gets product

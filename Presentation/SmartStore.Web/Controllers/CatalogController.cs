@@ -8,11 +8,16 @@ using SmartStore.Core;
 using SmartStore.Core.Caching;
 using SmartStore.Core.Domain.Catalog;
 using SmartStore.Core.Domain.Customers;
+using SmartStore.Core.Domain.Discounts;
+using SmartStore.Core.Domain.Forums;
 using SmartStore.Core.Domain.Media;
+using SmartStore.Core.Domain.Orders;
+using SmartStore.Core.Infrastructure;
 using SmartStore.Core.Localization;
 using SmartStore.Services;
 using SmartStore.Services.Catalog;
 using SmartStore.Services.Common;
+using SmartStore.Services.Customers;
 using SmartStore.Services.Directory;
 using SmartStore.Services.Filter;
 using SmartStore.Services.Localization;
@@ -27,7 +32,9 @@ using SmartStore.Web.Framework.Security;
 using SmartStore.Web.Framework.UI;
 using SmartStore.Web.Infrastructure.Cache;
 using SmartStore.Web.Models.Catalog;
+using SmartStore.Web.Models.Common;
 using SmartStore.Web.Models.Media;
+using SmartStore.Services.Forums;
 
 namespace SmartStore.Web.Controllers
 {
@@ -42,6 +49,7 @@ namespace SmartStore.Web.Controllers
         private readonly ICategoryTemplateService _categoryTemplateService;
         private readonly IManufacturerTemplateService _manufacturerTemplateService;
         private readonly ICurrencyService _currencyService;
+        private readonly Lazy<ICurrencyService> _currencyServices;
         private readonly IPictureService _pictureService;
         private readonly IPriceFormatter _priceFormatter;
 		private readonly IOrderReportService _orderReportService;
@@ -49,6 +57,7 @@ namespace SmartStore.Web.Controllers
 		private readonly IRecentlyViewedProductsService _recentlyViewedProductsService;
         private readonly ISpecificationAttributeService _specificationAttributeService;
         private readonly IGenericAttributeService _genericAttributeService;
+        private readonly Lazy<IGenericAttributeService> _genericAttributeServices;
         private readonly IAclService _aclService;
 		private readonly IStoreMappingService _storeMappingService;
         private readonly MediaSettings _mediaSettings;
@@ -56,6 +65,10 @@ namespace SmartStore.Web.Controllers
         private readonly IFilterService _filterService;
 		private readonly ICompareProductsService _compareProductsService;
 		private readonly CatalogHelper _helper;
+        private readonly ForumSettings _forumSettings;
+        private readonly Lazy<IForumService> _forumservice;
+        private readonly IOrderTotalCalculationService _orderTotalCalculationService;
+        private readonly CustomerSettings _customerSettings;
 
         #endregion
 
@@ -69,6 +82,7 @@ namespace SmartStore.Web.Controllers
             ICategoryTemplateService categoryTemplateService,
             IManufacturerTemplateService manufacturerTemplateService,
 			ICurrencyService currencyService,
+            Lazy<ICurrencyService> currencyServices,
 			IOrderReportService orderReportService,
 			IProductTagService productTagService,
 			IRecentlyViewedProductsService recentlyViewedProductsService,
@@ -77,12 +91,17 @@ namespace SmartStore.Web.Controllers
             ISpecificationAttributeService specificationAttributeService,
 			ICompareProductsService compareProductsService,
 			IGenericAttributeService genericAttributeService,
+            Lazy<IGenericAttributeService> genericAttributeServices,
 			IAclService aclService,
 			IStoreMappingService storeMappingService,
             MediaSettings mediaSettings, 
 			CatalogSettings catalogSettings,
 			IFilterService filterService,
- 			CatalogHelper helper)
+ 			CatalogHelper helper,
+            ForumSettings forumSettings,
+            Lazy<IForumService> forumService,
+            IOrderTotalCalculationService orderTotalCalculationService,
+            CustomerSettings customerSettings)
         {
 			this._services = services;
 			this._categoryService = categoryService;
@@ -91,6 +110,7 @@ namespace SmartStore.Web.Controllers
             this._categoryTemplateService = categoryTemplateService;
             this._manufacturerTemplateService = manufacturerTemplateService;
             this._currencyService = currencyService;
+            this._currencyServices = currencyServices;
 			this._orderReportService = orderReportService;
 			this._productTagService = productTagService;
 			this._recentlyViewedProductsService = recentlyViewedProductsService;
@@ -99,13 +119,17 @@ namespace SmartStore.Web.Controllers
             this._priceFormatter = priceFormatter;
             this._specificationAttributeService = specificationAttributeService;
             this._genericAttributeService = genericAttributeService;
+            this._genericAttributeServices = genericAttributeServices;
             this._aclService = aclService;
 			this._storeMappingService = storeMappingService;
             this._filterService = filterService;
             this._mediaSettings = mediaSettings;
             this._catalogSettings = catalogSettings;
-
+            this._forumSettings = forumSettings;
 			this._helper = helper;
+            this._forumservice = forumService;
+            this._orderTotalCalculationService = orderTotalCalculationService;
+            this._customerSettings = customerSettings;
         }
 
         #endregion
@@ -668,7 +692,95 @@ namespace SmartStore.Web.Controllers
 
 		#region Products by Tag
 
-		[ChildActionOnly]
+        [NonAction]
+        protected int GetUnreadPrivateMessages()
+        {
+            var result = 0;
+            var customer = _services.WorkContext.CurrentCustomer;
+            if (_forumSettings.AllowPrivateMessages && !customer.IsGuest())
+            {
+                var privateMessages = _forumservice.Value.GetAllPrivateMessages(_services.StoreContext.CurrentStore.Id, 0, customer.Id, false, null, false, string.Empty, 0, 1);
+
+                if (privateMessages.TotalCount > 0)
+                {
+                    result = privateMessages.TotalCount;
+                }
+            }
+
+            return result;
+        }
+
+        public ActionResult Shop()
+        {
+            var customer = _services.WorkContext.CurrentCustomer;
+
+            var unreadMessageCount = GetUnreadPrivateMessages();
+            var unreadMessage = string.Empty;
+            var alertMessage = string.Empty;
+            if (unreadMessageCount > 0)
+            {
+                unreadMessage = T("PrivateMessages.TotalUnread");
+
+                //notifications here
+                if (_forumSettings.ShowAlertForPM &&
+                    !customer.GetAttribute<bool>(SystemCustomerAttributeNames.NotifiedAboutNewPrivateMessages, _services.StoreContext.CurrentStore.Id))
+                {
+                    _genericAttributeServices.Value.SaveAttribute(customer, SystemCustomerAttributeNames.NotifiedAboutNewPrivateMessages, true, _services.StoreContext.CurrentStore.Id);
+                    alertMessage = T("PrivateMessages.YouHaveUnreadPM", unreadMessageCount);
+                }
+            }
+
+            //subtotal
+            decimal subtotal = 0;
+            var cart = _services.WorkContext.CurrentCustomer.GetCartItems(ShoppingCartType.ShoppingCart, _services.StoreContext.CurrentStore.Id);
+
+            if (cart.Count > 0)
+            {
+                decimal subtotalBase = decimal.Zero;
+                decimal orderSubTotalDiscountAmountBase = decimal.Zero;
+                Discount orderSubTotalAppliedDiscount = null;
+                decimal subTotalWithoutDiscountBase = decimal.Zero;
+                decimal subTotalWithDiscountBase = decimal.Zero;
+
+                _orderTotalCalculationService.GetShoppingCartSubTotal(cart,
+                    out orderSubTotalDiscountAmountBase, out orderSubTotalAppliedDiscount, out subTotalWithoutDiscountBase, out subTotalWithDiscountBase);
+
+                subtotalBase = subTotalWithoutDiscountBase;
+                subtotal = _currencyServices.Value.ConvertFromPrimaryStoreCurrency(subtotalBase, _services.WorkContext.WorkingCurrency);
+            }
+            var model = new ShopBarModel
+            {
+                IsAuthenticated = customer.IsRegistered(),
+                CustomerEmailUsername = customer.IsRegistered() ? (_customerSettings.UsernamesEnabled ? customer.Username : customer.Email) : "",
+                IsCustomerImpersonated = _services.WorkContext.OriginalCustomerIfImpersonated != null,
+                DisplayAdminLink = _services.Permissions.Authorize(StandardPermissionProvider.AccessAdminPanel),
+                ShoppingCartEnabled = _services.Permissions.Authorize(StandardPermissionProvider.EnableShoppingCart),
+                ShoppingCartAmount = _priceFormatter.FormatPrice(subtotal, true, false),
+                WishlistEnabled = _services.Permissions.Authorize(StandardPermissionProvider.EnableWishlist),
+                AllowPrivateMessages = _forumSettings.AllowPrivateMessages,
+                UnreadPrivateMessages = unreadMessage,
+                AlertMessage = alertMessage,
+                CompareProductsEnabled = _catalogSettings.CompareProductsEnabled
+            };
+
+            if (model.ShoppingCartEnabled || model.WishlistEnabled)
+            {
+                if (model.ShoppingCartEnabled)
+                    model.ShoppingCartItems = cart.GetTotalProducts();
+
+                if (model.WishlistEnabled)
+                    model.WishlistItems = customer.CountProductsInCart(ShoppingCartType.Wishlist, _services.StoreContext.CurrentStore.Id);
+            }
+
+            if (_catalogSettings.CompareProductsEnabled)
+            {
+                model.CompareItems = EngineContext.Current.Resolve<ICompareProductsService>().GetComparedProductsCount();
+            }
+
+            return View(model);
+        }
+
+        [ChildActionOnly]
 		public ActionResult PopularProductTags()
 		{
 			var cacheKey = string.Format(ModelCacheEventConsumer.PRODUCTTAG_POPULAR_MODEL_KEY, _services.WorkContext.WorkingLanguage.Id, _services.StoreContext.CurrentStore.Id);

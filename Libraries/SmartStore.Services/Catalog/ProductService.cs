@@ -266,7 +266,19 @@ namespace SmartStore.Services.Catalog
             var products = query.ToList();
             return products;
         }
-        
+
+        public virtual IList<Product> GetAllProducts()
+        {
+            var query =
+                from p in _productRepository.Table
+                orderby p.HomePageDisplayOrder
+                where p.Published && !p.Deleted
+                select p;
+
+            var products = query.ToList();
+            return products;
+        }
+
         /// <summary>
         /// Gets product
         /// </summary>
