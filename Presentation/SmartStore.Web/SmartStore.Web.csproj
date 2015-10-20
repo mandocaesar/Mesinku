@@ -1142,6 +1142,7 @@
     <Content Include="fonts\fontawesome-webfonte0a5.eot" />
     <Content Include="fonts\fontawesome-webfonte0a5.ttf" />
     <Content Include="fonts\fontawesome-webfonte0a5.woff" />
+    <None Include="Properties\PublishProfiles\Mesinku Desktop.pubxml" />
     <None Include="Scripts\jquery-2.1.1.intellisense.js" />
     <Content Include="Scripts\globalize\cultures\globalize.culture.ar-AE.js" />
     <Content Include="Scripts\globalize\cultures\globalize.culture.ar-BH.js" />
@@ -2219,15 +2220,8 @@
     <AspNetCompiler VirtualPath="temp" PhysicalPath="$(WebProjectOutputDir)" />
   </Target>
   <PropertyGroup>
-    <PostBuildEvent>if not exist "$(TargetDir)x86" md "$(TargetDir)x86"
-    xcopy /s /y "$(SolutionDir)..\lib\sqlce\x86\*.*" "$(TargetDir)x86"
-    xcopy /s /y "$(SolutionDir)..\lib\ClearScript.V8\Native\x86\*.*" "$(TargetDir)x86"
-if not exist "$(TargetDir)amd64" md "$(TargetDir)amd64"
-    xcopy /s /y "$(SolutionDir)..\lib\sqlce\amd64\*.*" "$(TargetDir)amd64"
-    xcopy /s /y "$(SolutionDir)..\lib\ClearScript.V8\Native\amd64\*.*" "$(TargetDir)amd64"
-
-if not exist "$(TargetDir)ClearScript.V8" md "$(TargetDir)ClearScript.V8"
-     xcopy /s /y "$(SolutionDir)..\lib\ClearScript.V8\lib\*.*" "$(TargetDir)ClearScript.V8"</PostBuildEvent>
+    <PostBuildEvent>
+    </PostBuildEvent>
   </PropertyGroup>
   <ProjectExtensions>
     <VisualStudio>
